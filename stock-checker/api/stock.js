@@ -53,12 +53,33 @@ export default async function handler(req, res) {
         name: loc.name,
         stock,
         address: loc.address1,
-        distance: Math.floor(Math.random() * 5) + 1, // placeholder for postcode distance
+        // We'll keep this simple: distance placeholder
+        distance: Math.floor(Math.random() * 5) + 1,
       };
     });
 
-    const locationsWithStock = await Promise.all(inventoryPromises);
-    return res.status(200).json({ locations: locationsWithStock });
+    let locationsWithStock = await Promise.all(inventoryPromises);
+
+    // Filter stores that have stock
+    locationsWithStock = locationsWithStock.filter(loc => loc.stock > 0);
+
+    // Sort by distance
+    locationsWithStock.sort((a, b) => a.distance - b.distance);
+
+    // Only top 3
+    const closestThree = locationsWithStock.slice(0, 3);
+
+    // Return HTML for front-end insertion
+    const html = closestThree.map(loc => `
+      <div class="stock-location">
+        <h4 class="store-name">${loc.name}</h4>
+        <p class="store-address">${loc.address}</p>
+        <p class="store-stock">${loc.stock} in stock</p>
+        <p class="store-distance">${loc.distance} miles away</p>
+      </div>
+    `).join('');
+
+    return res.status(200).json({ html });
 
   } catch (err) {
     console.error(err);
