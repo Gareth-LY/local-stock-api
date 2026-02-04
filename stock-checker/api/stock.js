@@ -68,11 +68,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { variant_id, postcode } = req.body || {};
+    const { variant_id, postcode, check_only } = req.body || {};
 
-    if (!variant_id || !postcode) {
+    if (!variant_id) {
       return res.json({ 
-        html: '<p class="error">Please provide variant ID and postcode</p>' 
+        error: 'Missing variant_id' 
       });
     }
 
@@ -82,7 +82,7 @@ export default async function handler(req, res) {
     if (!SHOP || !TOKEN) {
       console.error("Missing environment variables");
       return res.json({ 
-        html: '<p class="error">Configuration error</p>' 
+        error: 'Configuration error' 
       });
     }
 
@@ -99,7 +99,7 @@ export default async function handler(req, res) {
 
     if (!variantResponse.ok) {
       return res.json({ 
-        html: '<p class="error">Variant not found</p>' 
+        error: 'Variant not found' 
       });
     }
 
@@ -108,7 +108,7 @@ export default async function handler(req, res) {
 
     if (!inventory_item_id) {
       return res.json({ 
-        html: '<p class="error">No inventory data</p>' 
+        error: 'No inventory data' 
       });
     }
 
@@ -125,20 +125,18 @@ export default async function handler(req, res) {
 
     const levelsData = await inventoryResponse.json();
     
-    const locationsWithStock = (levelsData.inventory_levels || []).filter(
-      (loc) => loc.available > 0
-    );
-
-    if (locationsWithStock.length === 0) {
-      return res.json({
-        html: '<p class="no-stock">Out of stock at all stores</p>'
+    // Get locations to find Unit 22
+    const allLocationIds = (levelsData.inventory_levels || []).map(loc => loc.location_id).join(",");
+    
+    if (!allLocationIds) {
+      return res.json({ 
+        unit22_out_of_stock: true,
+        other_stores_have_stock: false
       });
     }
 
-    // Get locations
-    const locationIds = locationsWithStock.map((loc) => loc.location_id).join(",");
     const locationsResponse = await fetch(
-      `https://${SHOP}/admin/api/2025-10/locations.json?ids=${locationIds}`,
+      `https://${SHOP}/admin/api/2025-10/locations.json?ids=${allLocationIds}`,
       {
         headers: {
           "X-Shopify-Access-Token": TOKEN,
@@ -149,25 +147,83 @@ export default async function handler(req, res) {
 
     const locationsData = await locationsResponse.json();
 
+    // Find Unit 22 stock level
+    let unit22Stock = 0;
+    let unit22Found = false;
+
+    for (const invLevel of levelsData.inventory_levels || []) {
+      const location = locationsData.locations?.find(
+        (loc) => loc.id === invLevel.location_id
+      );
+
+      if (location && (
+        location.name?.toLowerCase().includes("unit 22") || 
+        location.address1?.toLowerCase().includes("valley road")
+      )) {
+        unit22Stock = invLevel.available;
+        unit22Found = true;
+        console.log("Unit 22 stock:", unit22Stock);
+        break;
+      }
+    }
+
+    // Check if other stores have stock (excluding Unit 22)
+    const otherStoresWithStock = (levelsData.inventory_levels || []).filter(invLevel => {
+      const location = locationsData.locations?.find(
+        (loc) => loc.id === invLevel.location_id
+      );
+      
+      if (!location) return false;
+      
+      const isUnit22 = location.name?.toLowerCase().includes("unit 22") || 
+                       location.address1?.toLowerCase().includes("valley road");
+      
+      return !isUnit22 && invLevel.available > 0;
+    });
+
+    const unit22OutOfStock = unit22Stock === 0;
+    const otherStoresHaveStock = otherStoresWithStock.length > 0;
+
+    // If just checking availability, return status
+    if (check_only) {
+      return res.json({
+        unit22_out_of_stock: unit22OutOfStock,
+        other_stores_have_stock: otherStoresHaveStock,
+        unit22_stock: unit22Stock
+      });
+    }
+
+    // If postcode provided, show nearby stores
+    if (!postcode) {
+      return res.json({ 
+        error: 'Missing postcode' 
+      });
+    }
+
+    if (otherStoresWithStock.length === 0) {
+      return res.json({
+        html: '<p class="no-stock">Sorry, this item is currently out of stock at all stores.</p>'
+      });
+    }
+
     // Geocode customer
     const customerCoords = await geocodePostcode(postcode);
     
     if (!customerCoords) {
       return res.json({ 
-        html: '<p class="error">Invalid postcode</p>' 
+        html: '<p class="error">Invalid postcode. Please enter a valid UK postcode.</p>' 
       });
     }
 
-    // Process locations
+    // Process locations (excluding Unit 22)
     const results = [];
     
-    for (const invLevel of locationsWithStock) {
+    for (const invLevel of otherStoresWithStock) {
       const location = locationsData.locations?.find(
         (loc) => loc.id === invLevel.location_id
       );
 
       if (!location) continue;
-      if (location.name?.toLowerCase().includes("unit 22")) continue;
 
       let distance = null;
       
@@ -194,7 +250,7 @@ export default async function handler(req, res) {
 
     if (results.length === 0) {
       return res.json({
-        html: '<p class="no-stock">No stores found</p>'
+        html: '<p class="no-stock">No stores found with stock.</p>'
       });
     }
 
@@ -209,7 +265,7 @@ export default async function handler(req, res) {
     // Generate HTML
     const html = `
       <div class="stock-available">
-        <h4>Available at nearby stores:</h4>
+        <h4>Available at these nearby stores:</h4>
         <ul class="store-list">
           ${final.map(loc => `
             <li class="store-item">
@@ -217,7 +273,7 @@ export default async function handler(req, res) {
               <div class="store-address">${loc.address}</div>
               ${loc.phone ? `<div class="store-phone">📞 ${loc.phone}</div>` : ''}
               <div class="store-stock">
-                <strong>${loc.available}</strong> in stock${loc.distance ? ` • ${loc.distance.toFixed(1)} miles` : ''}
+                <strong>${loc.available}</strong> in stock${loc.distance ? ` • ${loc.distance.toFixed(1)} miles away` : ''}
               </div>
             </li>
           `).join('')}
@@ -230,7 +286,7 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error("Error:", error);
     return res.json({ 
-      html: '<p class="error">Error checking stock</p>' 
+      error: 'Error checking stock' 
     });
   }
 }
