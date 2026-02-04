@@ -1,4 +1,15 @@
+// api/stock.js
 export default async function handler(req, res) {
+  // ✅ Handle preflight CORS requests first
+  res.setHeader("Access-Control-Allow-Origin", "https://lucy-and-yak-dev-store.myshopify.com"); // only your Shopify domain
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.status(200).end(); // respond to preflight
+    return;
+  }
+
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
     return;
@@ -11,6 +22,7 @@ export default async function handler(req, res) {
     return;
   }
 
+  // Example inventory data
   const inventoryData = [
     { id: 1, name: "Brighton Store", stock: 5, address: "Unit 22, Valley Road", postcode: "BN1" },
     { id: 2, name: "London Store", stock: 0, address: "123 London St", postcode: "LN1" },
@@ -24,17 +36,6 @@ export default async function handler(req, res) {
       address: store.address,
       distance: Math.floor(Math.random() * 5) + 1,
     }));
-
-  // ✅ CORS headers
-  res.setHeader("Access-Control-Allow-Origin", "*"); // or specific domain
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  // Handle preflight requests
-  if (req.method === "OPTIONS") {
-    res.status(200).end();
-    return;
-  }
 
   res.status(200).json({ locations: nearby });
 }
