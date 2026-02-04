@@ -1,22 +1,26 @@
 import fetch from "node-fetch";
 
-// CORS whitelist
 const allowedOrigins = [
   "https://lucy-and-yak-dev-store.myshopify.com",
   "https://dev.lucyandyak.com",
 ];
 
 export default async function handler(req, res) {
-  // Handle CORS preflight
   const origin = req.headers.origin;
+
+  // Always set CORS headers if origin matches
   if (allowedOrigins.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization"
+    );
   }
 
+  // Respond to preflight OPTIONS request
   if (req.method === "OPTIONS") {
-    return res.status(200).end();
+    return res.status(204).end();
   }
 
   if (req.method !== "POST") {
@@ -30,21 +34,19 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing variant_id or postcode" });
     }
 
-    // Determine which store/token to use
-    const host = origin || "";
+    // Determine shop/token
     let SHOP, TOKEN;
-
-    if (host.includes("dev.lucyandyak.com")) {
+    if (origin?.includes("dev.lucyandyak.com")) {
       SHOP = process.env.DEV_SHOP;
       TOKEN = process.env.DEV_TOKEN;
-    } else if (host.includes("lucy-and-yak-dev-store.myshopify.com")) {
+    } else if (origin?.includes("lucy-and-yak-dev-store.myshopify.com")) {
       SHOP = process.env.SHOPIFY_SHOP;
       TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;
     } else {
       return res.status(403).json({ error: "Unknown origin" });
     }
 
-    // Fetch inventory levels from Shopify Admin API
+    // Fetch inventory levels from Shopify
     const inventoryResponse = await fetch(
       `https://${SHOP}/admin/api/2025-10/inventory_levels.json?inventory_item_ids=${variant_id}`,
       {
@@ -59,14 +61,13 @@ export default async function handler(req, res) {
 
     console.log("RAW inventory_levels response:", levelsData);
 
-    // Filter only locations with stock > 0
-    let locationsWithStock = (levelsData.inventory_levels || []).filter(
+    const locationsWithStock = (levelsData.inventory_levels || []).filter(
       (loc) => loc.available > 0
     );
 
     console.log("Filtered locations with stock:", locationsWithStock);
 
-    // If nothing in stock, return all locations anyway for debug
+    // If none in stock, return all for debug
     if (locationsWithStock.length === 0) {
       return res.json({
         message: "No stock nearby yet, showing all locations for debug",
@@ -74,8 +75,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // TODO: Calculate distances and pick closest 3
-    // For now, just return them all
     return res.json({
       message: "Stock found",
       locations: locationsWithStock,
