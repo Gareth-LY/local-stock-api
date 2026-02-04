@@ -6,13 +6,20 @@ const ALLOWED_ORIGINS = [
 export default async function handler(req, res) {
   const origin = req.headers.origin;
 
+  // Always set CORS headers if origin is allowed
   if (ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "POST, OPTIONS"
+    );
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type"
+    );
   }
 
-  // Preflight
+  // Handle preflight OPTIONS request
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
@@ -26,7 +33,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing variant_id or postcode" });
   }
 
-  // Choose tokens based on origin
   let SHOP, TOKEN;
   if (origin === "https://dev.lucyandyak.com") {
     SHOP = process.env.DEV_SHOP;
@@ -39,7 +45,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Get variant to find inventory_item_id
+    // Fetch variant and inventory levels (Shopify Admin API 2025-10)
     const variantRes = await fetch(
       `https://${SHOP}/admin/api/2025-10/variants/${variant_id}.json`,
       {
@@ -52,7 +58,6 @@ export default async function handler(req, res) {
     const variantData = await variantRes.json();
     const inventoryItemId = variantData.variant.inventory_item_id;
 
-    // Get inventory levels
     const levelsRes = await fetch(
       `https://${SHOP}/admin/api/2025-10/inventory_levels.json?inventory_item_ids=${inventoryItemId}`,
       {
@@ -64,7 +69,6 @@ export default async function handler(req, res) {
     );
     const levelsData = await levelsRes.json();
 
-    // Get store locations
     const locationsRes = await fetch(
       `https://${SHOP}/admin/api/2025-10/locations.json`,
       {
@@ -76,7 +80,6 @@ export default async function handler(req, res) {
     );
     const locations = await locationsRes.json();
 
-    // Merge levels with locations and filter by stock
     const stores = levelsData.inventory_levels
       .map(level => {
         const loc = locations.locations.find(l => l.id === level.location_id);
@@ -86,7 +89,7 @@ export default async function handler(req, res) {
               stock: level.available,
               address: loc.address1,
               postcode: loc.zip || "",
-              distance: Math.floor(Math.random() * 10) + 1, // temp distance
+              distance: Math.floor(Math.random() * 10) + 1,
             }
           : null;
       })
